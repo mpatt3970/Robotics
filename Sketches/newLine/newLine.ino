@@ -21,13 +21,10 @@ const int SPEED = 150;
 
 //set some values for speeds, fine tune later
 const int SLOWER = 100;
-const int MODDERATE = 200;
+const int MODERATE = 200;
 const int FASTER = 300;
 
-//set servo speeds
-const int STOP = 90;
-const int RIGHT = 110;
-const int LEFT = 70;
+const int TURN_90_TIME = 2000;
 
 void setup() {
   //declares the pins
@@ -46,14 +43,14 @@ void setup() {
 
 void oldForward () {
   //one step forward
-  digitalWrite (forwardR, HIGH);  
-  digitalWrite (reverseR, LOW); 
-  analogWrite (speedRight, SPEED);  
-  digitalWrite (forwardL, HIGH);  
-  digitalWrite (reverseL, LOW); 
-  analogWrite (speedLeft, SPEED); 
-  delay(TIME);  
-  digitalWrite (forwardL, LOW); 
+  digitalWrite (forwardR, HIGH);
+  digitalWrite (reverseR, LOW);
+  analogWrite (speedRight, SPEED);
+  digitalWrite (forwardL, HIGH);
+  digitalWrite (reverseL, LOW);
+  analogWrite (speedLeft, SPEED);
+  delay(TIME);
+  digitalWrite (forwardL, LOW);
   digitalWrite (forwardR, LOW);
 }
 
@@ -130,79 +127,74 @@ boolean checkFound() {
   return out;
 }
 
-int checkCloseState() {
-  //This reads the near sensor, then checks it against currently readable values
-  //returns a int representing a field on the color wheel
-  // - and more importantly, the angle of the arm or the stop state
-  int  near = analogRead(closeSensor);
-  int state = -1;
-  if (near < 100) {
-    state = 0;
-  } else if (near < 200) {
-    state = 1;
-  } else if (near < 300) {
-    state = 2;
-  } else if (near < 400) {
-    state = 3;
-  } else if (near < 500) {
-    state = 4;
-  } else if (near < 600) {
-    state = 5;
-  } else if (near < 700) {
-    state = 6;
-  } else if (near < 800) {
-    state = 7;
-  } else if (near < 900) {
-    state = 8;
+boolean inMiddle(int angle) {
+  //if it's around 90 degrees
+  if (angle > 85 && angle < 95) {
+    return true;
   }
-  return state;
+  return false;
 }
 
 boolean sweepLeftDFS() {
-  //enter a loop that moves left until the stop state is reached or the line is found
-  while (!checkFound() && checkCloseState() != 0) { //0 here represents the stop state
-    rotator.write(LEFT); //move left 
+  //decrement the servo by 5 degrees and check again
+  for (int i = rotator.read() - 5; i > 5 && !checkFound(); i -=5) {
+    //move the servo to the next position
+    rotator.write(i);
     delay(25);
   }
-  //stop the servo
-  rotator.write(STOP); //or whatever the stop value is
   //if it was successful return true, so that lost doesn't call the other sweep function
   if (checkFound()) {
     //not setting the leftFirst value here because it will be better to read the state to know the direction
     return true;
   } else {
-     //move the servo off the stop state
-     servo.write(RIGHT); //move right for a little bit
-     delay(100); //hopefully long enough to get off the stop state
      return false;
   }
 }
 
 boolean sweepRightDFS() {
   //enter a loop that moves left until the stop state is reached or the line is found
-  while (!checkFound() && checkCloseState() != 8) { //8 here represents the stop state
-    rotator.write(RIGHT); //move right
-    //update more frequently to avoid overshooting the line
+  for (int i = rotator.read() + 5; i < 175 && !checkFound(); i += 5) {
+    rotator.write(i);
     delay(25);
   }
-  //stop the servo
-  rotator.write(STOP); //or whatever the stop value is
   //if it was successful return true, so that lost doesn't call the other sweep function
   if (checkFound()) {
     //not setting the leftFirst value here because it will be better to read the state to know the direction
     return true;
   } else {
-    //move the servo off the stop state so that the 
-     servo.write(LEFT); //move left for a little bit
-     delay(100); //hopefully long enough to get off the stop state
-     return false;
+    return false;
   }
 }
 
 void straightenUp() {
+  int ratio;
   if (checkFound()) {
+    int angle = rotator.read();
+    if (angle < 90) {
+      //update leftFirst to give it an idea of which to check first next time it is lost
+      leftFirst = true;
+      ratio = angle/90;
+      digitalWrite(reverseL, LOW);
+      digitalWrite(forwardR, LOW);
+      analogWrite(speedLeft, MODERATE);
+      analogWrite(speedRight, MODERATE);
+      digitalWrite(forwardL, HIGH);
+      digitalWrite(reverseR, HIGH);
+    } else {
+      leftFirst = false;
+      ratio = (angle - 90)/90;
+      digitalWrite(reverseR, LOW);
+      digitalWrite(forwardL, LOW);
+      analogWrite(speedLeft, MODERATE);
+      analogWrite(speedRight, MODERATE);
+      digitalWrite(forwardR, HIGH);
+      digitalWrite(reverseL, HIGH);
+    }
+    int duration = ratio*TURN_90_TIME;
+    rotator.write(90);
+    delay(duration);
+    
     //only act if the line was found
-    int state = checkCloseState();
     //based on this state we can determine how much to turn, roughly
     //something like oldRight() for a duration of (time_for_90/angle_of_state)
     //and straighten the servo arm
@@ -210,6 +202,15 @@ void straightenUp() {
   } else {
     //if the line was not found, damage control mode
     //set the servo to the middle, and back up a little, maybe a random amount to try to avoid an endless loop
+    rotator.write(90);
+    digitalWrite(forwardL, LOW);
+    digitalWrite(forwardR, LOW);
+    analogWrite(speedLeft, SLOWER);
+    analogWrite(speedRight, SLOWER);
+    digitalWrite(reverseL, HIGH);
+    digitalWrite(reverseR, HIGH);
+    delay(75);
+    //and this will exit to the main loop, hopefully the line will be found at this point, and the robot can re-attempt the turn
   }
 }
 
@@ -231,11 +232,12 @@ void lost() {
 }
 
 void follow() {
-  //check if the line is found and if the near sensor is in middle
-  if (checkFound() && checkCloseState() == 4) { //4 here represents the middle
+  int degrees = rotator.read();
+  //check if the line is found and if the servo is centered
+  if (checkFound() && inMiddle(degrees)) {
     //move forward at speed of faster
-    digitalWrite(speedRight, FASTER);
-    digitalWrite(speedLeft, FASTER);
+    analogWrite(speedRight, FASTER);
+    analogWrite(speedLeft, FASTER);
     digitalWrite(reverseL, LOW);
     digitalWrite(reverseL, LOW);
     digitalWrite(forwardL, HIGH);
